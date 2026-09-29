@@ -14,7 +14,7 @@ describe('Date 7-day Tool Worker', () => {
   const runRequest = async (query) => {
     const req = new Request('http://localhost/api/verify-reschedule', {
         method: 'POST',
-        body: JSON.stringify({ time_reference: query }),
+        body: JSON.stringify({ user_spoken_date: query }),
         headers: { 'Content-Type': 'application/json' }
     });
     const res = await worker.fetch(req, {}, {});
@@ -33,19 +33,19 @@ describe('Date 7-day Tool Worker', () => {
   it('should reject "today"', async () => {
     const res = await runRequest('today');
     expect(res.status).toBe(200);
-    expect(res.body.is_valid).toBe(false);
-    expect(res.body.error_type).toBe('past_date');
+    expect(res.body.is_booking_allowed).toBe(false);
+    expect(res.body.rejection_reason).toBe('date_is_in_past');
   });
 
   it('should parse "tomorrow"', async () => {
     const res = await runRequest('tomorrow');
     expect(res.status).toBe(200);
-    expect(res.body.target_date_iso).toBe('2024-05-16');
+    expect(res.body.calculated_date_english).toBe('2024-05-16');
   });
 
   it('should parse "next tuesday"', async () => {
     const res = await runRequest('next tuesday');
     expect(res.status).toBe(200);
-    expect(res.body.target_date_iso).toBe('2024-05-21');
+    expect(res.body.calculated_date_english).toBe('2024-05-21');
   });
 });

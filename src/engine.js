@@ -25,10 +25,10 @@ function generateAvailableDates(todayIST) {
     for (let i = 1; i <= 7; i++) {
         const d = addDays(todayIST, i);
         dates.push({
-            date_iso: format(d, 'yyyy-MM-dd'),
+            date_english: format(d, 'yyyy-MM-dd'),
             date_hindi: formatHindiDate(d),
-            day_hindi: new Intl.DateTimeFormat('hi-IN', { weekday: 'long', timeZone: TIMEZONE }).format(d),
-            day_english: new Intl.DateTimeFormat('en-IN', { weekday: 'long', timeZone: TIMEZONE }).format(d)
+            day_english: new Intl.DateTimeFormat('en-IN', { weekday: 'long', timeZone: TIMEZONE }).format(d),
+            day_hindi: new Intl.DateTimeFormat('hi-IN', { weekday: 'long', timeZone: TIMEZONE }).format(d)
         });
     }
     return dates;
@@ -36,56 +36,59 @@ function generateAvailableDates(todayIST) {
 
 app.post('/api/verify-reschedule', (req, res) => {
     try {
-        const { time_reference } = req.body;
+        const user_spoken_date = req.body.user_spoken_date || req.body.time_reference;
 
-        if (!time_reference) {
-            return res.status(400).json({ error: "Missing required parameter: time_reference" });
+        if (!user_spoken_date) {
+            return res.status(400).json({ error: "Missing required parameter: user_spoken_date" });
         }
 
         const todayIST = getTodayIST();
         const windowStart = addDays(todayIST, 1);
         const windowEnd = addDays(todayIST, 7);
 
-        const available_dates = generateAvailableDates(todayIST);
+        const next_seven_available_dates = generateAvailableDates(todayIST);
 
-        const parsedResult = chrono.parseDate(time_reference, todayIST, { forwardDate: true });
+        // Pre-process common Indian English phrase
+        let cleaned_reference = user_spoken_date.toLowerCase().replace('day after tomorrow', 'in 2 days');
+
+        const parsedResult = chrono.parseDate(cleaned_reference, todayIST, { forwardDate: true });
 
         if (!parsedResult || !isDateValid(parsedResult)) {
             return res.json({
-                is_valid: false,
-                error_type: "unparseable",
-                received_reference: time_reference,
-                window: {
-                    start_iso: format(windowStart, 'yyyy-MM-dd'),
-                    end_iso: format(windowEnd, 'yyyy-MM-dd')
+                is_booking_allowed: false,
+                rejection_reason: "unparseable_gibberish",
+                user_spoken_date: user_spoken_date,
+                allowed_booking_window: {
+                    start_date: format(windowStart, 'yyyy-MM-dd'),
+                    end_date: format(windowEnd, 'yyyy-MM-dd')
                 },
-                available_dates: available_dates
+                next_seven_available_dates: next_seven_available_dates
             });
         }
 
         const targetDate = startOfDay(parsedResult);
-        const targetHindi = formatHindiDate(targetDate);
-        const targetISO = format(targetDate, 'yyyy-MM-dd');
+        const calculated_date_hindi = formatHindiDate(targetDate);
+        const calculated_date_english = format(targetDate, 'yyyy-MM-dd');
 
         const isPast = isBefore(targetDate, windowStart);
         const isTooFarFuture = isAfter(targetDate, windowEnd);
-        const isValid = !isPast && !isTooFarFuture;
+        const is_booking_allowed = !isPast && !isTooFarFuture;
 
-        let errorType = null;
-        if (isPast) errorType = "past_date";
-        if (isTooFarFuture) errorType = "future_date_exceeds_window";
+        let rejection_reason = null;
+        if (isPast) rejection_reason = "date_is_in_past";
+        if (isTooFarFuture) rejection_reason = "date_exceeds_7_day_limit";
 
         return res.json({
-            is_valid: isValid,
-            error_type: errorType,
-            received_reference: time_reference,
-            target_date_iso: targetISO,
-            target_date_hindi: targetHindi,
-            window: {
-                start_iso: format(windowStart, 'yyyy-MM-dd'),
-                end_iso: format(windowEnd, 'yyyy-MM-dd')
+            is_booking_allowed: is_booking_allowed,
+            rejection_reason: rejection_reason,
+            user_spoken_date: user_spoken_date,
+            calculated_date_english: calculated_date_english,
+            calculated_date_hindi: calculated_date_hindi,
+            allowed_booking_window: {
+                start_date: format(windowStart, 'yyyy-MM-dd'),
+                end_date: format(windowEnd, 'yyyy-MM-dd')
             },
-            available_dates: available_dates
+            next_seven_available_dates: next_seven_available_dates
         });
 
     } catch (error) {

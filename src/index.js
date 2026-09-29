@@ -16,9 +16,22 @@ function getTodayIST() {
     return startOfDay(zonedNow);
 }
 
+function generateAvailableDates(todayIST) {
+    const dates = [];
+    for (let i = 1; i <= 7; i++) {
+        const d = addDays(todayIST, i);
+        dates.push({
+            date_iso: format(d, 'yyyy-MM-dd'),
+            date_hindi: formatHindiDate(d),
+            day_hindi: new Intl.DateTimeFormat('hi-IN', { weekday: 'long', timeZone: TIMEZONE }).format(d),
+            day_english: new Intl.DateTimeFormat('en-IN', { weekday: 'long', timeZone: TIMEZONE }).format(d)
+        });
+    }
+    return dates;
+}
+
 export default {
   async fetch(request, env, ctx) {
-    // Cloudflare Worker POST handler
     if (request.method !== 'POST') {
       return new Response(JSON.stringify({ error: "Only POST method is allowed for /api/verify-reschedule." }), {
         status: 405,
@@ -41,6 +54,9 @@ export default {
 
       const startHindi = formatHindiDate(windowStart);
       const endHindi = formatHindiDate(windowEnd);
+      
+      // Generate the array of the next 7 valid dates
+      const available_dates = generateAvailableDates(todayIST);
 
       // 2. Parse the natural language string
       const parsedResult = chrono.parseDate(time_reference, todayIST, { forwardDate: true });
@@ -49,6 +65,7 @@ export default {
           return new Response(JSON.stringify({
               is_valid: false,
               received_reference: time_reference,
+              available_dates: available_dates,
               agent_message_hindi: `माफ़ कीजिए, मुझे तारीख़ स्पष्ट नहीं हुई। आपकी अपॉइंटमेंट ${startHindi} से ${endHindi} के बीच ही रीशेड्यूल हो सकती है। क्या आप इस बीच की कोई तारीख़ बता सकते हैं?`
           }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
       }
@@ -80,6 +97,7 @@ export default {
               start_iso: format(windowStart, 'yyyy-MM-dd'),
               end_iso: format(windowEnd, 'yyyy-MM-dd')
           },
+          available_dates: available_dates,
           agent_message_hindi: agentMessage
       }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
 

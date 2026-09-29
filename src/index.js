@@ -47,26 +47,24 @@ export default {
           return new Response(JSON.stringify({ error: "Missing required parameter: time_reference" }), { status: 400, headers: { 'Content-Type': 'application/json' } });
       }
 
-      // 1. Establish strict Time bounds in IST
       const todayIST = getTodayIST();
-      const windowStart = addDays(todayIST, 1); // T+1 (Tomorrow)
-      const windowEnd = addDays(todayIST, 7);   // T+7 (7 days from today)
-
-      const startHindi = formatHindiDate(windowStart);
-      const endHindi = formatHindiDate(windowEnd);
+      const windowStart = addDays(todayIST, 1);
+      const windowEnd = addDays(todayIST, 7);
       
-      // Generate the array of the next 7 valid dates
       const available_dates = generateAvailableDates(todayIST);
 
-      // 2. Parse the natural language string
       const parsedResult = chrono.parseDate(time_reference, todayIST, { forwardDate: true });
 
       if (!parsedResult || !isDateValid(parsedResult)) {
           return new Response(JSON.stringify({
               is_valid: false,
+              error_type: "unparseable",
               received_reference: time_reference,
-              available_dates: available_dates,
-              agent_message_hindi: `माफ़ कीजिए, मुझे तारीख़ स्पष्ट नहीं हुई। आपकी अपॉइंटमेंट ${startHindi} से ${endHindi} के बीच ही रीशेड्यूल हो सकती है। क्या आप इस बीच की कोई तारीख़ बता सकते हैं?`
+              window: {
+                  start_iso: format(windowStart, 'yyyy-MM-dd'),
+                  end_iso: format(windowEnd, 'yyyy-MM-dd')
+              },
+              available_dates: available_dates
           }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
       }
 
@@ -74,22 +72,17 @@ export default {
       const targetHindi = formatHindiDate(targetDate);
       const targetISO = format(targetDate, 'yyyy-MM-dd');
 
-      // 3. Validation Logic
       const isPast = isBefore(targetDate, windowStart);
       const isTooFarFuture = isAfter(targetDate, windowEnd);
       const isValid = !isPast && !isTooFarFuture;
 
-      let agentMessage = "";
-      if (isValid) {
-          agentMessage = `जी, आप अपनी OPD appointment ${targetHindi} के लिए reschedule कराना चाहेंगे?`;
-      } else if (isPast) {
-          agentMessage = `जी, मैं बीते हुए समय में अपॉइंटमेंट बुक नहीं कर सकती। मैं अगले 7 दिनों यानी ${startHindi} से ${endHindi} तक रीशेड्यूल कर सकती हूँ। आप कौन सी तारीख़ चाहेंगे?`;
-      } else if (isTooFarFuture) {
-          agentMessage = `जी, फिलहाल मैं आपकी OPD appointment अगले 7 दिनों के अंदर यानी ${startHindi} से ${endHindi} तक ही reschedule कर सकती हूँ। क्या आप इस बीच कोई तारीख़ बता सकते हैं?`;
-      }
+      let errorType = null;
+      if (isPast) errorType = "past_date";
+      if (isTooFarFuture) errorType = "future_date_exceeds_window";
 
       return new Response(JSON.stringify({
           is_valid: isValid,
+          error_type: errorType,
           received_reference: time_reference,
           target_date_iso: targetISO,
           target_date_hindi: targetHindi,
@@ -97,8 +90,7 @@ export default {
               start_iso: format(windowStart, 'yyyy-MM-dd'),
               end_iso: format(windowEnd, 'yyyy-MM-dd')
           },
-          available_dates: available_dates,
-          agent_message_hindi: agentMessage
+          available_dates: available_dates
       }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
 
     } catch (error) {

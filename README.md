@@ -2,87 +2,154 @@
 
 This project serves as the backend NLP (Natural Language Processing) Date Engine for an AI Voice Agent. It takes natural conversational inputs (e.g., "कल", "next wednesday", "in 5 days", "tomorrow") and accurately maps them into a strict 7-day rescheduling window. 
 
-Critically, the engine guarantees that all calculations remain tethered to **India Standard Time (IST)**, protecting against midnight UTC rollovers that typically break AI Agent scheduling on cloud servers. It dynamically generates localized, conversational **Hindi prompt replies** based on whether the date is valid, too far in the future, or in the past.
+Critically, the engine guarantees that all calculations remain tethered to **India Standard Time (IST)**, protecting against midnight UTC rollovers that typically break AI Agent scheduling on cloud servers.
 
 ---
 
-## 🚀 Features
+## 🗺️ Overall System Architecture
 
-- **Conversational Date Parsing:** Leverages `chrono-node` to understand abstract human time references.
-- **Bulletproof Timezones:** Uses `date-fns-tz` to ensure strict calculation boundaries against `Asia/Kolkata` (IST).
-- **Strict Scheduling Window:** Constrains valid rescheduling strictly to `Tomorrow (T+1)` up to `7 days from today (T+7)`.
-- **Dynamic Hindi Generation:** Automatically crafts contextual Hindi phrases for the AI Agent to speak back to the user based on the validation result.
-- **Dual Support:** Contains both an **Express.js Node Engine** (primary) and a **Cloudflare Worker** variant.
+Here is how the data flows from the moment the user speaks, down to the Cloudflare Worker, and back to the user:
+
+```text
+  [ User ]
+     │ 🗣️ "I want to reschedule to next wednesday"
+     ▼
+┌───────────────┐
+│  Voice Agent  │  <-- Uses LLM (ChatGPT/Claude) to transcribe & extract text.
+│   (Vapi/Bland)│      Extracted `user_spoken_date` = "next wednesday"
+└───────┬───────┘
+        │ 🌐 POST /api/verify-reschedule
+        │ JSON: { "user_spoken_date": "next wednesday" }
+        ▼
+┌───────────────┐
+│   Cloudflare  │  <-- 1. Evaluates Time in IST.
+│     Worker    │  <-- 2. Parses string using chrono-node.
+│ (Date Engine) │  <-- 3. Checks boundaries (Tomorrow to T+7).
+└───────┬───────┘
+        │ 📤 Returns strict JSON payload 
+        │ (e.g. is_booking_allowed: true, calculated_date_english: '2024-05-22', next_seven_available_dates: [...])
+        ▼
+┌───────────────┐
+│  Voice Agent  │  <-- Reads the API response.
+│   (Vapi/Bland)│      If allowed: Proceeds to book.
+└───────┬───────┘      If rejected: Offers alternative dates from `next_seven_available_dates`.
+        │ 🗣️ "Great! I have rescheduled your appointment for 22nd May."
+        ▼
+  [ User ]
+```
+
+---
+
+## 📡 How to Hit the Cloudflare API
+
+Once deployed to Cloudflare, your worker will be assigned a public URL (usually something like `https://date-7day-tool.<your-cloudflare-subdomain>.workers.dev`). 
+
+You must trigger the endpoint via an HTTP **POST** request.
+
+### cURL Example:
+```bash
+curl -X POST "https://date-7day-tool.<your-cloudflare-subdomain>.workers.dev/api/verify-reschedule" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "user_spoken_date": "day after tomorrow"
+         }'
+```
+
+### Expected JSON Response (Success)
+When the user requests a valid date inside the window, the API responds like this:
+```json
+{
+  "is_booking_allowed": true,
+  "rejection_reason": null,
+  "user_spoken_date": "day after tomorrow",
+  "calculated_date_english": "2024-05-17",
+  "calculated_date_hindi": "17 मई",
+  "allowed_booking_window": {
+    "start_date": "2024-05-16",
+    "end_date": "2024-05-22"
+  },
+  "next_seven_available_dates": [
+    {
+      "date_english": "2024-05-16",
+      "date_hindi": "16 मई",
+      "day_english": "Thursday",
+      "day_hindi": "गुरुवार"
+    }
+    // ... all 7 days returned here to help the voice agent
+  ]
+}
+```
+
+### Expected JSON Response (Rejected/Past Date)
+If the user asks for `"today"`, the engine explicitly rejects it and provides the `rejection_reason`:
+```json
+{
+  "is_booking_allowed": false,
+  "rejection_reason": "date_is_in_past",
+  "user_spoken_date": "today",
+  "calculated_date_english": "2024-05-15",
+  "calculated_date_hindi": "15 मई",
+  "allowed_booking_window": {
+    "start_date": "2024-05-16",
+    "end_date": "2024-05-22"
+  },
+  "next_seven_available_dates": [ /* ... */ ]
+}
+```
+
+*(Rejection reasons can be: `"date_is_in_past"`, `"date_exceeds_7_day_limit"`, or `"unparseable_gibberish"`).*
 
 ---
 
 ## 🧩 Code Explanation: Section by Section
 
-The primary logic is located inside `src/engine.js`. Here is a breakdown of what the code does:
+The primary logic for Cloudflare is located inside `src/index.js`. Here is a breakdown of what the code does:
 
 ### 1. Dependencies and Initialization
 ```javascript
-import express from 'express';
-import * as chrono from 'chrono-node';
 import { addDays, startOfDay, isBefore, isAfter, format, isValid as isDateValid } from 'date-fns';
 import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
-
-const app = express();
-app.use(express.json());
-const TIMEZONE = 'Asia/Kolkata';
+import * as chrono from 'chrono-node';
 ```
-* **What it does:** We import the necessary libraries. `chrono-node` handles reading the human text, while `date-fns` acts as the backbone for calculating accurate date boundaries. `express` sets up the server to accept web requests.
+* **What it does:** We import the necessary libraries. `chrono-node` handles reading the human text, while `date-fns` acts as the backbone for calculating accurate date boundaries. 
 
 ### 2. Helper Functions (Formatting & Current Time)
 ```javascript
-export function formatHindiDate(dateObj) {
-    const options = { day: 'numeric', month: 'long', timeZone: TIMEZONE };
-    return new Intl.DateTimeFormat('hi-IN', options).format(dateObj);
-}
+function formatHindiDate(dateObj) { ... }
 
-export function getTodayIST() {
+function getTodayIST() {
     const now = new Date();
-    const nowISTStr = formatInTimeZone(now, TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss");
+    const nowISTStr = formatInTimeZone(now, 'Asia/Kolkata', "yyyy-MM-dd'T'HH:mm:ss");
     const zonedNow = new Date(nowISTStr);
     return startOfDay(zonedNow);
 }
 ```
 * **What it does:** 
-  * `formatHindiDate`: Takes a raw Date object and spits out a pretty string like `"16 मई"` so the Voice Agent sounds natural.
-  * `getTodayIST`: This is the most crucial function for server stability. It gets the current UTC server time, forces it into the exact current hour and day in India, and then rewinds to `00:00:00` (Start of Day). This prevents bugs where 11 PM in London accidentally shifts the day in India.
+  * `getTodayIST`: This is the most crucial function for server stability. It gets the current UTC Cloudflare Edge server time, forces it into the exact current hour and day in India, and then rewinds to `00:00:00` (Start of Day). This prevents bugs where 11 PM in London accidentally shifts the day in India.
 
 ### 3. Establishing Time Bounds
 ```javascript
 const todayIST = getTodayIST();
 const windowStart = addDays(todayIST, 1); // T+1 (Tomorrow)
 const windowEnd = addDays(todayIST, 7);   // T+7 (7 days from today)
+const next_seven_available_dates = generateAvailableDates(todayIST);
 ```
-* **What it does:** It sets up the strict boundary for the Voice Agent. The appointment cannot be rescheduled for "Today", it must be from "Tomorrow" onwards, up to a maximum of 7 days out.
+* **What it does:** It sets up the strict boundary for the Voice Agent. The appointment cannot be rescheduled for "Today", it must be from "Tomorrow" onwards, up to a maximum of 7 days out. It also generates the array of available days to feed back to the AI.
 
 ### 4. Parsing the Natural Language
 ```javascript
-const parsedResult = chrono.parseDate(time_reference, todayIST, { forwardDate: true });
+let cleaned_reference = user_spoken_date.toLowerCase().replace('day after tomorrow', 'in 2 days');
+const parsedResult = chrono.parseDate(cleaned_reference, todayIST, { forwardDate: true });
 ```
-* **What it does:** We feed the user's spoken words (e.g., "Monday") into `chrono-node`. By passing `todayIST` and `{ forwardDate: true }`, we instruct the engine to assume the user means the *upcoming* Monday relative to the Indian timezone.
+* **What it does:** We feed the user's spoken words (e.g., "Monday") into `chrono-node`. We have a specific interceptor that safely cleans Indian-English idioms like "day after tomorrow". 
 
-### 5. Validation Logic
+### 5. Validation Logic & Routing
 ```javascript
 const isPast = isBefore(targetDate, windowStart);
 const isTooFarFuture = isAfter(targetDate, windowEnd);
-const isValid = !isPast && !isTooFarFuture;
+const is_booking_allowed = !isPast && !isTooFarFuture;
 ```
-* **What it does:** Cross-checks the date `chrono` found against our `windowStart` and `windowEnd`.
-
-### 6. AI Agent Script Generation
-```javascript
-let agentMessage = "";
-if (isValid) {
-    agentMessage = `जी, आप अपनी OPD appointment ${targetHindi} के लिए reschedule कराना चाहेंगे?`;
-} else if (isPast) {
-    agentMessage = `जी, मैं बीते हुए समय में अपॉइंटमेंट बुक नहीं कर सकती। मैं अगले 7 दिनों यानी ${startHindi} से ${endHindi} तक रीशेड्यूल कर सकती हूँ...`;
-}
-```
-* **What it does:** Based on the boolean checks above, it dynamically concatenates the Hindi Date strings (`targetHindi`, `startHindi`) into a sentence that the AI voice engine will immediately read out to the customer.
+* **What it does:** Cross-checks the date `chrono` found against our bounds and builds the final JSON payload containing exactly why it passed or failed.
 
 ---
 
@@ -97,53 +164,33 @@ The engine is backed by a robust Vitest suite (`test/index.test.js` & `test/engi
 
  RUN  v1.6.1 D:/Tatwa projects/jeena seekho/Date 7day tool
 
- ✓ test/index.test.js  (11 tests) 108ms
- ✓ test/engine.test.js  (7 tests) 396ms
-   ✓ should return 400 if time_reference is missing
-   ✓ should correctly reject "today" because window starts tomorrow (T+1)
-   ✓ should accept "tomorrow" (T+1)
-   ✓ should accept a date exactly 7 days away (T+7)
-   ✓ should reject a date beyond 7 days (T+8) with future warning
-   ✓ should handle unparseable gibberish with a polite Hindi prompt
-   ✓ should correctly format Hindi dates and expose window boundaries in response
-
+ ✓ test/index.test.js  (4 tests) 99ms
+ ✓ test/engine.test.js  (11 tests) 201ms
+ 
  Test Files  2 passed (2)
-      Tests  18 passed (18)
+      Tests  15 passed (15)
 ```
-**Conclusion:** All 18 edge cases pass securely. The tool correctly blocks past bounds, correctly limits future bounds, flawlessly renders conversational Hindi strings, and accurately intercepts "gibberish" inputs with a polite fallback prompt.
+**Conclusion:** All 15 edge cases pass securely. The tool correctly blocks past bounds, limits future bounds, flawlessly formats Hindi strings, resolves tricky idioms like "day after tomorrow", and rejects gibberish safely.
 
 ---
 
-## ☁️ Deployment Guide
+## ☁️ Local Development & Deployment
 
-### Option 1: Deploying the Node/Express Engine (Recommended for standard servers)
-Because `src/engine.js` relies on Express.js, it is best suited for deployment on standard Node.js environments (like AWS EC2, Heroku, DigitalOcean, Render, or a Docker Container).
+### Run Locally
+To run tests and test the API locally:
+```bash
+npm install
+npm run test
+npm run dev
+```
 
-1. **Local Startup:**
-   Add a `server.js` file that imports the engine and listens on a port:
-   ```javascript
-   import app from './src/engine.js';
-   app.listen(3000, () => console.log('Server running on port 3000'));
-   ```
-2. **Start the server:**
-   ```bash
-   node server.js
-   ```
-3. **Deploy to Render / Heroku:**
-   - Push your code to a GitHub Repository.
-   - Connect the repository to your PaaS of choice.
-   - Set the build command to `npm install`.
-   - Set the start command to `node server.js`.
-
-### Option 2: Deploying to Cloudflare Workers (Edge Deployment)
-If you require Cloudflare Workers deployment, you must utilize the `src/index.js` file (which uses the native Cloudflare `fetch` API instead of Express).
-
-1. Authenticate your CLI:
-   ```bash
-   npx wrangler login
-   ```
-2. Deploy the worker directly:
-   ```bash
-   npm run deploy
-   ```
-This will read the `wrangler.toml` file and deploy the lightweight variant of the logic to Cloudflare's Edge network.
+### Deploying to Cloudflare Workers
+Ensure you have authenticated the Wrangler CLI:
+```bash
+npx wrangler login
+```
+Deploy the worker directly to the edge network:
+```bash
+npm run deploy
+```
+*(This commands reads `wrangler.toml` and uploads `src/index.js` to your Cloudflare account).*

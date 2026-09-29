@@ -1,0 +1,3 @@
+name = "date-7day-tool"
+main = "src/index.js"
+compatibility_date = "2024-03-20"

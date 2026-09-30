@@ -45,6 +45,8 @@ function translateHindiToEnglish(inputStr) {
         'जुलाई': 'july', 'अगस्त': 'august', 'सितंबर': 'september',
         'अक्टूबर': 'october', 'नवंबर': 'november', 'दिसंबर': 'december',
         // Numbers to digits
+        'first': '1', 'second': '2', 'third': '3', 'fourth': '4', 'fifth': '5',
+        'sixth': '6', 'seventh': '7', 'eighth': '8', 'ninth': '9', 'tenth': '10',
         'एक': '1', 'दो': '2', 'तीन': '3', 'चार': '4', 'पांच': '5', 'पाँच': '5',
         'छह': '6', 'छै': '6', 'सात': '7', 'आठ': '8', 'नौ': '9', 'दस': '10',
         'ग्यारह': '11', 'बारह': '12', 'तेरह': '13', 'चौदह': '14', 'पंद्रह': '15',
@@ -58,7 +60,7 @@ function translateHindiToEnglish(inputStr) {
     
     // 2. Clean up extra spaces (e.g., changes "4 th" to "4th")
     str = str.replace(/\s+/g, ' ').trim();
-    str = str.replace(/(\d+)\s*th/g, '$1th');
+    str = str.replace(/(\d+)\s*(st|nd|rd|th)/g, '$1$2');
     
     // 3. Final safety net: If it translates to just a number (e.g. user said "चार"), make it "4th"
     if (/^\d+$/.test(str)) {
@@ -113,8 +115,9 @@ app.post('/api/verify-reschedule', (req, res) => {
         
         let parsedResult = null;
         
-        // INTERCEPTOR: If the cleaned string is just an ordinal like "5th"
-        const standaloneDateMatch = cleaned_reference.match(/^(\d+)th$/);
+        // INTERCEPTOR: If the cleaned string is just an ordinal like "5th", "1st", or "the 2nd"
+        const cleaned_for_interceptor = cleaned_reference.replace(/^the\s+/i, '');
+        const standaloneDateMatch = cleaned_for_interceptor.match(/^(\d+)(st|nd|rd|th)?$/);
         if (standaloneDateMatch) {
             const targetDay = parseInt(standaloneDateMatch[1], 10);
             let tempDate = setDate(todayIST, targetDay);

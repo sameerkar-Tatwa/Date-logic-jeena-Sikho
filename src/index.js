@@ -7,7 +7,12 @@ const TIMEZONE = 'Asia/Kolkata';
 // --- ROBUST HINDI/HINGLISH TRANSLATION LAYER ---
 function translateHindiToEnglish(inputStr) {
     if (!inputStr) return "";
-    let str = inputStr.toLowerCase();
+    let str = inputStr.toLowerCase().trim();
+
+    // 1. If LLM sends just a raw number (e.g., "4"), instantly make it "4th"
+    if (/^\d+$/.test(str)) {
+        str = str + "th";
+    }
 
     str = str.replace(/day after tomorrow/g, 'in 2 days');
     
@@ -15,8 +20,9 @@ function translateHindiToEnglish(inputStr) {
         'परसों': 'in 2 days', 'parso': 'in 2 days', 'parson': 'in 2 days',
         'कल': 'tomorrow', 'kal': 'tomorrow',
         'आज': 'today', 'aaj': 'today',
-        'तारीख': '', 'tareekh': '', 'tarikh': '', 'tareek': '',
-        'को': '', 'ko': '', 'ka': '', 'ke': '',
+        // CRITICAL FIX: Convert tareekh/ko to 'th' so it parses as a date!
+        'तारीख': 'th', 'tareekh': 'th', 'tarikh': 'th', 'tareek': 'th',
+        'को': 'th', 'ko': 'th', 'ka': '', 'ke': '',
         'अगले': 'next ', 'agle': 'next ', 'agla': 'next ', 'agli': 'next ',
         'इस': 'this ', 'is': 'this ',
         'हफ्ते': 'week', 'hafte': 'week', 'hafta': 'week',
@@ -34,6 +40,7 @@ function translateHindiToEnglish(inputStr) {
         'मार्च': 'march', 'अप्रैल': 'april', 'मई': 'may', 'जून': 'june',
         'जुलाई': 'july', 'अगस्त': 'august', 'सितंबर': 'september',
         'अक्टूबर': 'october', 'नवंबर': 'november', 'दिसंबर': 'december',
+        // Numbers to digits
         'एक': '1', 'दो': '2', 'तीन': '3', 'चार': '4', 'पांच': '5', 'पाँच': '5',
         'छह': '6', 'छै': '6', 'सात': '7', 'आठ': '8', 'नौ': '9', 'दस': '10',
         'ग्यारह': '11', 'बारह': '12', 'तेरह': '13', 'चौदह': '14', 'पंद्रह': '15',
@@ -45,7 +52,16 @@ function translateHindiToEnglish(inputStr) {
         str = str.replace(regex, englishWord);
     }
     
-    return str.replace(/\s+/g, ' ').trim();
+    // 2. Clean up extra spaces (e.g., changes "4 th" to "4th")
+    str = str.replace(/\s+/g, ' ').trim();
+    str = str.replace(/(\d+)\s*th/g, '$1th');
+    
+    // 3. Final safety net: If it translates to just a number (e.g. user said "चार"), make it "4th"
+    if (/^\d+$/.test(str)) {
+        str = str + "th";
+    }
+
+    return str;
 }
 
 function formatHindiDate(dateObj) {

@@ -48,4 +48,16 @@ describe('Date 7-day Tool Worker', () => {
     expect(res.status).toBe(200);
     expect(res.body.calculated_date_english).toBe('2024-05-21');
   });
+  it('should parse standalone number (18)', async () => {
+    const res = await runRequest('18');
+    expect(res.status).toBe(200);
+    expect(res.body.calculated_date_english).toBe('2024-05-18');
+  });
+
+  it('should parse Hindi standalone date (5 तारीख)', async () => {
+    const res = await runRequest('5 तारीख');
+    expect(res.status).toBe(200);
+    expect(res.body.is_booking_allowed).toBe(false);
+    expect(res.body.calculated_date_english).toBe('2024-06-05');
+  });
 });

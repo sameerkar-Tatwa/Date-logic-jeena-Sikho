@@ -107,4 +107,26 @@ describe('7-Day Rescheduling Validation Engine (Express)', () => {
         expect(response.body.is_booking_allowed).toBe(false);
         expect(response.body.rejection_reason).toBe('unparseable_gibberish');
     });
+    it('should properly parse standalone number greater than today (18)', async () => {
+        const response = await runPost('18');
+        expect(response.status).toBe(200);
+        expect(response.body.is_booking_allowed).toBe(true);
+        expect(response.body.calculated_date_english).toBe('2024-05-18');
+    });
+
+    it('should properly parse standalone ordinal less than today (5th)', async () => {
+        const response = await runPost('5th');
+        expect(response.status).toBe(200);
+        expect(response.body.is_booking_allowed).toBe(false); // June 5th is outside the 7-day window
+        expect(response.body.rejection_reason).toBe('date_exceeds_7_day_limit');
+        expect(response.body.calculated_date_english).toBe('2024-06-05');
+    });
+
+    it('should properly parse Hindi standalone date (5 तारीख)', async () => {
+        const response = await runPost('5 तारीख');
+        expect(response.status).toBe(200);
+        expect(response.body.is_booking_allowed).toBe(false);
+        expect(response.body.rejection_reason).toBe('date_exceeds_7_day_limit');
+        expect(response.body.calculated_date_english).toBe('2024-06-05');
+    });
 });

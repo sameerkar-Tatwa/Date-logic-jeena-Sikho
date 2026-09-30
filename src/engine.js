@@ -1,6 +1,6 @@
 import express from 'express';
 import * as chrono from 'chrono-node';
-import { addDays, startOfDay, isBefore, isAfter, format, isValid as isDateValid } from 'date-fns';
+import { addDays, startOfDay, isBefore, isAfter, format, isValid as isDateValid, setDate, addMonths, getDate } from 'date-fns';
 import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
 
 const app = express();
@@ -111,7 +111,22 @@ app.post('/api/verify-reschedule', (req, res) => {
         // Pass the LLM's output through our robust translation dictionary
         const cleaned_reference = translateHindiToEnglish(user_spoken_date);
         
-        const parsedResult = chrono.parseDate(cleaned_reference, todayIST, { forwardDate: true });
+        let parsedResult = null;
+        
+        // INTERCEPTOR: If the cleaned string is just an ordinal like "5th"
+        const standaloneDateMatch = cleaned_reference.match(/^(\d+)th$/);
+        if (standaloneDateMatch) {
+            const targetDay = parseInt(standaloneDateMatch[1], 10);
+            let tempDate = setDate(todayIST, targetDay);
+            
+            // If the day has already passed this month, or is today, they mean next month
+            if (targetDay <= getDate(todayIST)) {
+                tempDate = addMonths(tempDate, 1);
+            }
+            parsedResult = tempDate;
+        } else {
+            parsedResult = chrono.parseDate(cleaned_reference, todayIST, { forwardDate: true });
+        }
 
         if (!parsedResult || !isDateValid(parsedResult)) {
             return res.json({

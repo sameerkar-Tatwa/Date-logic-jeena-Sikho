@@ -8,6 +8,50 @@ app.use(express.json());
 
 const TIMEZONE = 'Asia/Kolkata';
 
+// --- ROBUST HINDI/HINGLISH TRANSLATION LAYER ---
+function translateHindiToEnglish(inputStr) {
+    if (!inputStr) return "";
+    let str = inputStr.toLowerCase();
+
+    str = str.replace(/day after tomorrow/g, 'in 2 days');
+    
+    const dictionary = {
+        'परसों': 'in 2 days', 'parso': 'in 2 days', 'parson': 'in 2 days',
+        'कल': 'tomorrow', 'kal': 'tomorrow',
+        'आज': 'today', 'aaj': 'today',
+        'तारीख': '', 'tareekh': '', 'tarikh': '', 'tareek': '',
+        'को': '', 'ko': '', 'ka': '', 'ke': '',
+        'अगले': 'next ', 'agle': 'next ', 'agla': 'next ', 'agli': 'next ',
+        'इस': 'this ', 'is': 'this ',
+        'हफ्ते': 'week', 'hafte': 'week', 'hafta': 'week',
+        'दिन': 'days', 'din': 'days',
+        'बाद': 'later', 'baad': 'later',
+        'महीने': 'month', 'mahina': 'month',
+        'सोमवार': 'monday', 'somwar': 'monday',
+        'मंगलवार': 'tuesday', 'mangalwar': 'tuesday',
+        'बुधवार': 'wednesday', 'budhwar': 'wednesday',
+        'गुरुवार': 'thursday', 'वीरवार': 'thursday', 'बृहस्पतिवार': 'thursday',
+        'शुक्रवार': 'friday', 'shukrawar': 'friday',
+        'शनिवार': 'saturday', 'shaniwar': 'saturday',
+        'रविवार': 'sunday', 'इतवार': 'sunday', 'raviwar': 'sunday',
+        'जनवरी': 'january', 'फ़रवरी': 'february', 'फरवरी': 'february',
+        'मार्च': 'march', 'अप्रैल': 'april', 'मई': 'may', 'जून': 'june',
+        'जुलाई': 'july', 'अगस्त': 'august', 'सितंबर': 'september',
+        'अक्टूबर': 'october', 'नवंबर': 'november', 'दिसंबर': 'december',
+        'एक': '1', 'दो': '2', 'तीन': '3', 'चार': '4', 'पांच': '5', 'पाँच': '5',
+        'छह': '6', 'छै': '6', 'सात': '7', 'आठ': '8', 'नौ': '9', 'दस': '10',
+        'ग्यारह': '11', 'बारह': '12', 'तेरह': '13', 'चौदह': '14', 'पंद्रह': '15',
+        'सोलह': '16', 'सत्रह': '17', 'अठारह': '18', 'उन्नीस': '19', 'बीस': '20'
+    };
+
+    for (const [hindiWord, englishWord] of Object.entries(dictionary)) {
+        const regex = new RegExp(hindiWord, 'gi');
+        str = str.replace(regex, englishWord);
+    }
+    
+    return str.replace(/\s+/g, ' ').trim();
+}
+
 export function formatHindiDate(dateObj) {
     const options = { day: 'numeric', month: 'long', timeZone: TIMEZONE };
     return new Intl.DateTimeFormat('hi-IN', options).format(dateObj);
@@ -48,9 +92,9 @@ app.post('/api/verify-reschedule', (req, res) => {
 
         const next_seven_available_dates = generateAvailableDates(todayIST);
 
-        // Pre-process common Indian English phrase
-        let cleaned_reference = user_spoken_date.toLowerCase().replace('day after tomorrow', 'in 2 days');
-
+        // Pass the LLM's output through our robust translation dictionary
+        const cleaned_reference = translateHindiToEnglish(user_spoken_date);
+        
         const parsedResult = chrono.parseDate(cleaned_reference, todayIST, { forwardDate: true });
 
         if (!parsedResult || !isDateValid(parsedResult)) {

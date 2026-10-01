@@ -1,6 +1,6 @@
 # Jeena Sikho: 7-Day Rescheduling Validation Engine
 
-This project serves as the backend NLP (Natural Language Processing) Date Engine for an AI Voice Agent. It takes natural conversational inputs (e.g., "कल", "next wednesday", "in 5 days", "tomorrow") and accurately maps them into a strict 7-day rescheduling window. 
+This project serves as the backend NLP (Natural Language Processing) Date Engine for an AI Voice Agent. It takes natural conversational inputs (e.g., "कल", "next wednesday", "in 5 days", "tomorrow", "4 तारीख", "संडे", "ek") and accurately maps them into a strict 7-day rescheduling window. 
 
 Critically, the engine guarantees that all calculations remain tethered to **India Standard Time (IST)**, protecting against midnight UTC rollovers that typically break AI Agent scheduling on cloud servers.
 
@@ -22,155 +22,130 @@ Here is how the data flows from the moment the user speaks, down to the Cloudfla
         │ JSON: { "user_spoken_date": "next wednesday" }
         ▼
 ┌───────────────┐
-│   Cloudflare  │  <-- 1. Evaluates Time in IST.
-│     Worker    │  <-- 2. Parses string using chrono-node.
-│ (Date Engine) │  <-- 3. Checks boundaries (Tomorrow to T+7).
+│   Cloudflare  │  <-- 1. Translates & Pre-processes (Hindi/Hinglish -> English Math)
+│     Worker    │  <-- 2. Parses string using chrono-node / Math Interceptors.
+│ (Date Engine) │  <-- 3. Checks boundaries (Tomorrow to T+7) or flags ambiguity.
 └───────┬───────┘
         │ 📤 Returns strict JSON payload 
-        │ (e.g. is_booking_allowed: true, calculated_date_english: '2024-05-22', next_seven_available_dates: [...])
+        │ (e.g. is_booking_allowed: true, calculated_date_english: '2026-10-07', next_seven_available_dates: [...])
         ▼
 ┌───────────────┐
 │  Voice Agent  │  <-- Reads the API response.
 │   (Vapi/Bland)│      If allowed: Proceeds to book.
-└───────┬───────┘      If rejected: Offers alternative dates from `next_seven_available_dates`.
-        │ 🗣️ "Great! I have rescheduled your appointment for 22nd May."
+└───────┬───────┘      If rejected: Offers alternative dates from `next_seven_available_dates` OR asks clarification.
+        │ 🗣️ "Great! I have rescheduled your appointment for 7th October."
         ▼
   [ User ]
 ```
 
 ---
 
-## 📡 How to Hit the Cloudflare API
+## 📡 Core Technologies
 
-Once deployed to Cloudflare, your worker will be assigned a public URL (usually something like `https://date-7day-tool.<your-cloudflare-subdomain>.workers.dev`). 
+### 1. Chrono-Node (`chrono-node`)
+Chrono is a powerful natural language date parser designed for JavaScript. It is the core engine we use to convert human time references (like `"tomorrow"`, `"in 2 days"`, `"this monday"`, `"october 4th"`) into actual computer `Date` objects. 
 
-You must trigger the endpoint via an HTTP **POST** request.
+However, Chrono was built primarily for standard Western English formatting. It fails heavily on Indian conversational idioms (e.g. `"day after tomorrow"`, `"next monday"`, `"4th"` as a standalone number). Therefore, we built a massive **Pre-Processing NLP Translation Layer** on top of Chrono to "feed" it perfectly formatted data.
 
-### cURL Example:
-```bash
-curl -X POST "https://date-7day-tool.<your-cloudflare-subdomain>.workers.dev/api/verify-reschedule" \
-     -H "Content-Type: application/json" \
-     -d '{
-           "user_spoken_date": "day after tomorrow"
-         }'
-```
+### 2. Date-Fns (`date-fns`)
+This library acts as the mathematical backbone. It handles strictly calculating bounds (`addDays`), checking boundaries (`isBefore`, `isAfter`), and formatting dates identically regardless of the server's local time zone.
+
+---
+
+## 🧩 The Date-by-Date Engine Logic (How it Works)
+
+The engine evaluates every user input through a sophisticated, multi-layer funnel inside `src/index.js` (and `src/engine.js`):
+
+### Phase 1: The Translation & Safety Net (`translateHindiToEnglish`)
+Before `chrono-node` even sees the text, we clean it aggressively:
+1. **Raw Number Catch:** If the user says `"4"`, it mathematically appends `"th"` to make it `"4th"`.
+2. **Word Boundary Hinglish Numbers:** Words like `"ek"`, `"do"`, `"char"` are translated to `"1"`, `"2"`, `"4"`. *Crucially, we use Regex Word Boundaries (`\b`) so that the English word "do" (as in "I do not know") is not accidentally translated into "2"!*
+3. **Conversational Dictionary:** Translates words like `"कल"` / `"kal"` to `"tomorrow"`, `"परसों"` / `"parson"` to `"in 2 days"`, and transliterated days like `"संडे"` to `"sunday"`.
+4. **Suffix Normalization:** Cleans up messy LLM outputs like `"the 4 th"` and normalizes them to `"4th"`.
+
+### Phase 2: The "Next Day" Ambiguity Interceptor
+When Indian users say `"next Sunday"` or `"coming Monday"`, it is naturally ambiguous (do they mean the immediate upcoming Sunday, or the one in the following week?). 
+*   **Logic:** The engine intercepts any string starting with `next` or `coming`. It strictly calculates the date of *this* upcoming day (e.g. Oct 4), mathematically adds 7 days to get *next* week's day (Oct 11), and completely bypasses normal validation to return `is_booking_allowed: "ambiguous"`.
+*   **Result:** It generates a custom Hindi message: `"क्या आप 4 अक्टूबर (इस रविवार) या 11 अक्टूबर (अगले रविवार) की बात कर रहे हैं?"` so the Voice Agent can ask the user for clarification.
+
+### Phase 3: The Standalone Ordinal Interceptor
+Chrono requires a month context to parse dates properly (e.g., `"4th October"`). If the LLM just says `"4th"` or `"2nd"`, Chrono crashes.
+*   **Logic:** A custom Regex intercepts any standalone ordinal (`/^(\d+)(st|nd|rd|th)?$/`). It strips the suffix and mathematically forces the current month's date.
+*   **Intelligent Month-Rolling:** If today is Oct 1st, and the user asks for `"1st"`, the engine knows they cannot book today (since the window is T+1 to T+7). It intelligently rolls the date to November 1st, where it gets cleanly rejected for being outside the 7-day window.
+
+### Phase 4: Chrono Parsing & Boundary Validation
+If the string passes through the interceptors, it hits `chrono.parseDate()`. The resulting `Date` object is then checked against the strict mathematical bounds:
+*   `windowStart`: Tomorrow (T+1)
+*   `windowEnd`: 7 Days from Today (T+7)
+
+If the date is before `windowStart`, it rejects with `"date_is_in_past"`. If it's after `windowEnd`, it rejects with `"date_exceeds_7_day_limit"`.
+
+---
+
+## 📡 API Interaction Guide
 
 ### Expected JSON Response (Success)
-When the user requests a valid date inside the window, the API responds like this:
+When the user requests a valid date inside the window (e.g., `"day after tomorrow"`):
 ```json
 {
   "is_booking_allowed": true,
   "rejection_reason": null,
   "user_spoken_date": "day after tomorrow",
-  "calculated_date_english": "2024-05-17",
-  "calculated_date_hindi": "17 मई",
+  "calculated_date_english": "2026-10-03",
+  "calculated_date_hindi": "3 अक्टूबर",
   "allowed_booking_window": {
-    "start_date": "2024-05-16",
-    "end_date": "2024-05-22"
-  },
-  "next_seven_available_dates": [
-    {
-      "date_english": "2024-05-16",
-      "date_hindi": "16 मई",
-      "day_english": "Thursday",
-      "day_hindi": "गुरुवार"
-    }
-    // ... all 7 days returned here to help the voice agent
-  ]
-}
-```
-
-### Expected JSON Response (Rejected/Past Date)
-If the user asks for `"today"`, the engine explicitly rejects it and provides the `rejection_reason`:
-```json
-{
-  "is_booking_allowed": false,
-  "rejection_reason": "date_is_in_past",
-  "user_spoken_date": "today",
-  "calculated_date_english": "2024-05-15",
-  "calculated_date_hindi": "15 मई",
-  "allowed_booking_window": {
-    "start_date": "2024-05-16",
-    "end_date": "2024-05-22"
+    "start_date": "2026-10-02",
+    "end_date": "2026-10-08"
   },
   "next_seven_available_dates": [ /* ... */ ]
 }
 ```
 
-*(Rejection reasons can be: `"date_is_in_past"`, `"date_exceeds_7_day_limit"`, or `"unparseable_gibberish"`).*
-
----
-
-## 🧩 Code Explanation: Section by Section
-
-The primary logic for Cloudflare is located inside `src/index.js`. Here is a breakdown of what the code does:
-
-### 1. Dependencies and Initialization
-```javascript
-import { addDays, startOfDay, isBefore, isAfter, format, isValid as isDateValid } from 'date-fns';
-import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
-import * as chrono from 'chrono-node';
-```
-* **What it does:** We import the necessary libraries. `chrono-node` handles reading the human text, while `date-fns` acts as the backbone for calculating accurate date boundaries. 
-
-### 2. Helper Functions (Formatting & Current Time)
-```javascript
-function formatHindiDate(dateObj) { ... }
-
-function getTodayIST() {
-    const now = new Date();
-    const nowISTStr = formatInTimeZone(now, 'Asia/Kolkata', "yyyy-MM-dd'T'HH:mm:ss");
-    const zonedNow = new Date(nowISTStr);
-    return startOfDay(zonedNow);
+### Expected JSON Response (Ambiguity Clarification)
+When the user asks for `"next sunday"`:
+```json
+{
+  "is_booking_allowed": "ambiguous",
+  "rejection_reason": "ambiguous_day_of_week",
+  "clarification_message": "क्या आप 4 अक्टूबर (इस रविवार) या 11 अक्टूबर (अगले रविवार) की बात कर रहे हैं?",
+  "user_spoken_date": "next sunday",
+  "allowed_booking_window": { ... },
+  "next_seven_available_dates": [ ... ]
 }
 ```
-* **What it does:** 
-  * `getTodayIST`: This is the most crucial function for server stability. It gets the current UTC Cloudflare Edge server time, forces it into the exact current hour and day in India, and then rewinds to `00:00:00` (Start of Day). This prevents bugs where 11 PM in London accidentally shifts the day in India.
 
-### 3. Establishing Time Bounds
-```javascript
-const todayIST = getTodayIST();
-const windowStart = addDays(todayIST, 1); // T+1 (Tomorrow)
-const windowEnd = addDays(todayIST, 7);   // T+7 (7 days from today)
-const next_seven_available_dates = generateAvailableDates(todayIST);
+### Expected JSON Response (Rejected/Past Date)
+When the user asks for `"today"` or `"10 तारीख"` (which exceeds the limit):
+```json
+{
+  "is_booking_allowed": false,
+  "rejection_reason": "date_exceeds_7_day_limit",
+  "user_spoken_date": "10 तारीख",
+  "calculated_date_english": "2026-10-10",
+  "calculated_date_hindi": "10 अक्टूबर",
+  "allowed_booking_window": { ... },
+  "next_seven_available_dates": [ ... ]
+}
 ```
-* **What it does:** It sets up the strict boundary for the Voice Agent. The appointment cannot be rescheduled for "Today", it must be from "Tomorrow" onwards, up to a maximum of 7 days out. It also generates the array of available days to feed back to the AI.
-
-### 4. Parsing the Natural Language
-```javascript
-let cleaned_reference = user_spoken_date.toLowerCase().replace('day after tomorrow', 'in 2 days');
-const parsedResult = chrono.parseDate(cleaned_reference, todayIST, { forwardDate: true });
-```
-* **What it does:** We feed the user's spoken words (e.g., "Monday") into `chrono-node`. We have a specific interceptor that safely cleans Indian-English idioms like "day after tomorrow". 
-
-### 5. Validation Logic & Routing
-```javascript
-const isPast = isBefore(targetDate, windowStart);
-const isTooFarFuture = isAfter(targetDate, windowEnd);
-const is_booking_allowed = !isPast && !isTooFarFuture;
-```
-* **What it does:** Cross-checks the date `chrono` found against our bounds and builds the final JSON payload containing exactly why it passed or failed.
 
 ---
 
 ## 🧪 Comprehensive Test Report
 
-The engine is backed by a robust Vitest suite (`test/index.test.js` & `test/engine.test.js`) that simulates Voice Agent API constraints. 
+The engine is backed by a robust Vitest suite (`test/index.test.js` & `test/engine.test.js`) that verifies all boundaries, ordinals, and ambiguous cases. 
 
 **Test Output:**
 ```bash
 > date-7day-tool@1.0.0 test
 > vitest run
 
- RUN  v1.6.1 D:/Tatwa projects/jeena seekho/Date 7day tool
-
- ✓ test/index.test.js  (4 tests) 99ms
- ✓ test/engine.test.js  (11 tests) 201ms
+ ✓ test/index.test.js  (6 tests) 
+ ✓ test/engine.test.js  (14 tests) 
  
  Test Files  2 passed (2)
-      Tests  15 passed (15)
+      Tests  20 passed (20)
 ```
-**Conclusion:** All 15 edge cases pass securely. The tool correctly blocks past bounds, limits future bounds, flawlessly formats Hindi strings, resolves tricky idioms like "day after tomorrow", and rejects gibberish safely.
+**Conclusion:** All 20 edge cases pass perfectly. The tool correctly blocks past bounds, handles standalone ordinals (`"1st"`, `"2nd"`), translates `"parson"` and `"do din baad"`, intelligently month-rolls invalid current dates, and safely generates clarification prompts for ambiguous week days.
 
 ---
 

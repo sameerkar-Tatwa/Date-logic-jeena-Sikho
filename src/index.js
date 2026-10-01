@@ -15,34 +15,51 @@ function translateHindiToEnglish(inputStr) {
     }
 
     str = str.replace(/day after tomorrow/g, 'in 2 days');
+    str = str.replace(/coming/gi, 'next'); // Normalize 'coming' to 'next'
+    
+    // Word-bounded dictionary for risky short ENGLISH transliterated words and numbers
+    const boundedDictionary = {
+        'ek': '1', 'do': '2', 'teen': '3', 'char': '4', 'paanch': '5',
+        'chhe': '6', 'saat': '7', 'aath': '8', 'nau': '9', 'das': '10',
+        'is': 'this', 'ko': 'th', 'ka': '', 'ke': ''
+    };
+    for (const [hindiWord, englishWord] of Object.entries(boundedDictionary)) {
+        const regex = new RegExp(`\\b${hindiWord}\\b`, 'gi');
+        str = str.replace(regex, englishWord);
+    }
     
     const dictionary = {
-        'परसों': 'in 2 days', 'parso': 'in 2 days', 'parson': 'in 2 days',
-        'कल': 'tomorrow', 'kal': 'tomorrow',
-        'आज': 'today', 'aaj': 'today',
-        // CRITICAL FIX: Convert tareekh/ko to 'th' so it parses as a date!
-        'तारीख': 'th', 'tareekh': 'th', 'tarikh': 'th', 'tareek': 'th',
-        'को': 'th', 'ko': 'th', 'ka': '', 'ke': '',
-        'अगले': 'next ', 'agle': 'next ', 'agla': 'next ', 'agli': 'next ',
-        'इस': 'this ', 'is': 'this ',
-        'हफ्ते': 'week', 'hafte': 'week', 'hafta': 'week',
-        'दिन': 'days', 'din': 'days',
-        'बाद': 'later', 'baad': 'later',
-        'महीने': 'month', 'mahina': 'month',
-        'सोमवार': 'monday', 'somwar': 'monday',
-        'मंगलवार': 'tuesday', 'mangalwar': 'tuesday',
-        'बुधवार': 'wednesday', 'budhwar': 'wednesday',
-        'गुरुवार': 'thursday', 'वीरवार': 'thursday', 'बृहस्पतिवार': 'thursday',
-        'शुक्रवार': 'friday', 'shukrawar': 'friday',
-        'शनिवार': 'saturday', 'shaniwar': 'saturday',
-        'रविवार': 'sunday', 'इतवार': 'sunday', 'raviwar': 'sunday',
-        'जनवरी': 'january', 'फ़रवरी': 'february', 'फरवरी': 'february',
+        'parson': 'in 2 days', 'parso': 'in 2 days', 'परसों': 'in 2 days',
+        'kal': 'tomorrow', 'कल': 'tomorrow',
+        'aaj': 'today', 'आज': 'today',
+        'tareekh': 'th', 'tarikh': 'th', 'tareek': 'th', 'तारीख': 'th',
+        'को': 'th',
+        'agle': 'next ', 'agla': 'next ', 'agli': 'next ', 'अगले': 'next ',
+        'इस': 'this ',
+        'hafte': 'week', 'hafta': 'week', 'हफ्ते': 'week',
+        'din': 'days', 'दिन': 'days',
+        'baad': 'later', 'बाद': 'later',
+        'mahina': 'month', 'महीने': 'month',
+        // Transliterated Days
+        'संडे': 'sunday', 'मंडे': 'monday', 'ट्यूसडे': 'tuesday', 'वेडनसडे': 'wednesday',
+        'थर्सडे': 'thursday', 'फ्राइडे': 'friday', 'सैटरडे': 'saturday',
+        // Standard Hindi Days
+        'somwar': 'monday', 'सोमवार': 'monday',
+        'mangalwar': 'tuesday', 'मंगलवार': 'tuesday',
+        'budhwar': 'wednesday', 'बुधवार': 'wednesday',
+        'वीरवार': 'thursday', 'बृहस्पतिवार': 'thursday', 'गुरुवार': 'thursday', 
+        'shukrawar': 'friday', 'शुक्रवार': 'friday',
+        'shaniwar': 'saturday', 'शनिवार': 'saturday',
+        'raviwar': 'sunday', 'इतवार': 'sunday', 'रविवार': 'sunday',
+        // Months
+        'january': 'january', 'february': 'february', 'फ़रवरी': 'february', 'फरवरी': 'february',
         'मार्च': 'march', 'अप्रैल': 'april', 'मई': 'may', 'जून': 'june',
         'जुलाई': 'july', 'अगस्त': 'august', 'सितंबर': 'september',
         'अक्टूबर': 'october', 'नवंबर': 'november', 'दिसंबर': 'december',
-        // Numbers to digits
+        // English Ordinals
         'first': '1', 'second': '2', 'third': '3', 'fourth': '4', 'fifth': '5',
         'sixth': '6', 'seventh': '7', 'eighth': '8', 'ninth': '9', 'tenth': '10',
+        // Hindi Numbers
         'एक': '1', 'दो': '2', 'तीन': '3', 'चार': '4', 'पांच': '5', 'पाँच': '5',
         'छह': '6', 'छै': '6', 'सात': '7', 'आठ': '8', 'नौ': '9', 'दस': '10',
         'ग्यारह': '11', 'बारह': '12', 'तेरह': '13', 'चौदह': '14', 'पंद्रह': '15',
@@ -117,6 +134,33 @@ export default {
 
       // Pass the LLM's output through our robust translation dictionary
       const cleaned_reference = translateHindiToEnglish(user_spoken_date);
+      
+      const ambiguousDayMatch = cleaned_reference.match(/^next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/i);
+      if (ambiguousDayMatch) {
+          const dayOfWeek = ambiguousDayMatch[1].toLowerCase();
+          const thisDate = chrono.parseDate(`this ${dayOfWeek}`, todayIST, { forwardDate: true });
+          const nextDate = addDays(thisDate, 7); // Mathematically enforce it is exactly 1 week later
+          
+          const hindiDays = { monday: 'सोमवार', tuesday: 'मंगलवार', wednesday: 'बुधवार', thursday: 'गुरुवार', friday: 'शुक्रवार', saturday: 'शनिवार', sunday: 'रविवार' };
+          const dayHindiName = hindiDays[dayOfWeek];
+          
+          const thisHindi = formatHindiDate(thisDate);
+          const nextHindi = formatHindiDate(nextDate);
+          
+          const clarification_message = `क्या आप ${thisHindi} (इस ${dayHindiName}) या ${nextHindi} (अगले ${dayHindiName}) की बात कर रहे हैं?`;
+          
+          return new Response(JSON.stringify({
+              is_booking_allowed: false,
+              rejection_reason: "ambiguous_day_of_week",
+              clarification_message: clarification_message,
+              user_spoken_date: user_spoken_date,
+              allowed_booking_window: {
+                  start_date: format(windowStart, 'yyyy-MM-dd'),
+                  end_date: format(windowEnd, 'yyyy-MM-dd')
+              },
+              next_seven_available_dates: next_seven_available_dates
+          }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+      }
       
       let parsedResult = null;
       

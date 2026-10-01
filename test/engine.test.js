@@ -52,20 +52,22 @@ describe('7-Day Rescheduling Validation Engine (Express)', () => {
         expect(response.body.calculated_date_english).toBe('2024-05-17');
     });
 
-    it('should accept "next monday" (May 20)', async () => {
+    it('should intercept "next monday" as ambiguous', async () => {
         const response = await runPost('next monday');
         
         expect(response.status).toBe(200);
-        expect(response.body.is_booking_allowed).toBe(true);
-        expect(response.body.calculated_date_english).toBe('2024-05-20');
+        expect(response.body.is_booking_allowed).toBe(false);
+        expect(response.body.rejection_reason).toBe('ambiguous_day_of_week');
+        expect(response.body.clarification_message).toContain('क्या आप');
     });
 
-    it('should accept "next wednesday" (May 22, boundary limit)', async () => {
+    it('should intercept "next wednesday" as ambiguous', async () => {
         const response = await runPost('next wednesday');
         
         expect(response.status).toBe(200);
-        expect(response.body.is_booking_allowed).toBe(true);
-        expect(response.body.calculated_date_english).toBe('2024-05-22');
+        expect(response.body.is_booking_allowed).toBe(false);
+        expect(response.body.rejection_reason).toBe('ambiguous_day_of_week');
+        expect(response.body.clarification_message).toContain('क्या आप');
     });
 
     it('should properly parse "three days after" (May 18)', async () => {

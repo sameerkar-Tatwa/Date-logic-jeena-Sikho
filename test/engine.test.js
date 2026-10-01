@@ -56,7 +56,7 @@ describe('7-Day Rescheduling Validation Engine (Express)', () => {
         const response = await runPost('next monday');
         
         expect(response.status).toBe(200);
-        expect(response.body.is_booking_allowed).toBe(false);
+        expect(response.body.is_booking_allowed).toBe('ambiguous');
         expect(response.body.rejection_reason).toBe('ambiguous_day_of_week');
         expect(response.body.clarification_message).toContain('क्या आप');
     });
@@ -65,7 +65,7 @@ describe('7-Day Rescheduling Validation Engine (Express)', () => {
         const response = await runPost('next wednesday');
         
         expect(response.status).toBe(200);
-        expect(response.body.is_booking_allowed).toBe(false);
+        expect(response.body.is_booking_allowed).toBe('ambiguous');
         expect(response.body.rejection_reason).toBe('ambiguous_day_of_week');
         expect(response.body.clarification_message).toContain('क्या आप');
     });

@@ -150,7 +150,7 @@ export default {
           const clarification_message = `क्या आप ${thisHindi} (इस ${dayHindiName}) या ${nextHindi} (अगले ${dayHindiName}) की बात कर रहे हैं?`;
           
           return new Response(JSON.stringify({
-              is_booking_allowed: false,
+              is_booking_allowed: "ambiguous",
               rejection_reason: "ambiguous_day_of_week",
               clarification_message: clarification_message,
               user_spoken_date: user_spoken_date,

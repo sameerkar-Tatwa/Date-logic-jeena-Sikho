@@ -46,7 +46,7 @@ describe('Date 7-day Tool Worker', () => {
   it('should intercept "next tuesday" as ambiguous', async () => {
     const res = await runRequest('next tuesday');
     expect(res.status).toBe(200);
-    expect(res.body.is_booking_allowed).toBe(false);
+    expect(res.body.is_booking_allowed).toBe('ambiguous');
     expect(res.body.rejection_reason).toBe('ambiguous_day_of_week');
   });
   it('should parse standalone number (18)', async () => {
